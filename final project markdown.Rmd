@@ -1,0 +1,1062 @@
+---
+title: "An Exploration of U.S. Billboard Top 100 Songs + Lyrics, 1964-2015"
+author: "Simon Basescu, Chris Gernon, Danny Grubbs-Donovan, Zach Levitt"
+date: "May 16, 2019"
+output: html_document
+runtime: shiny
+---
+<h2> Introduction </h2>
+
+The data we analyzed came from a Kaggle dataset called "Billboard 1964-2015 Songs + Lyrics." This dataset includes the top 100 ranked songs according to Billboard's United States year-end chart for each year from 1964-2015 along with the title of the song, the song's artist, the year the song appeared in the Billboard top 100, and the lyrics of the song. The final chart ranking is calculated using an inverse point system based on the weekly Billboard charts (100 points for a week at number one, 1 point for a week at number 100, etc). For example, in the dataset, a song that was ranked #1 for a year is associated with a rank of 1.
+
+We were interested in answering two questions: 
+
+1) Which themes expressed in lyrics and song titles tend to lead to higher rankings on the Billboard top 100?
+
+2) How have the themes expressed in the lyrics and song titles of popular songs changed since 1964? 
+
+To answer these questions, we created three Shiny apps that allow users to explore our data analysis. In our first Shiny app, we demonstrate how our algorithm works to categorize songs based on themes we created. Users have the ability to enter a song name and artist and the app will show the top themes embedded in the lyrics. 
+
+In our second Shiny app, we attempt to answer our first question by defining a relationship between theme and ranking in the top 100 for each year. As our app shows, we were unable to find a significant association between theme strength and ranking in the top 100. We decided to keep this analysis in our final document to demonstrate the analysis we ran to explore this relationship, even though it was not fruitful. 
+
+Finally, in our third Shiny app, we aim to answer our second question by exploring the change in theme strength over time. The user can choose one of our eight themes to display a line graph showing how the prevalence of that theme has changed over time from each year since 1964. 
+
+
+<h2> Methodology </h2>
+
+In order to determine which themes lead to higher rankings, we first determined eight themes: love, drugs, money, religion, rural, urban, sad and profane. Next, we came up with a list of words commonly associated with each theme (e.g. for love, we used words like kiss, marriage, and boyfriend). (Appendix 1) Before running our analysis, we stemmed every word in our word lists and dataset using the tm package and removed stop_words as well. We compared our list of words for each theme to the lyrics of each song to determine a theme score - how prevalent a certain theme was in the given song. This score was determined by finding the percentage of words in the lyrics of each song that belonged to each theme group. Then, we found the standard deviation of each of these percentages within each theme, which normalized the data and allowed comparison across themes. (Appendix 2)
+
+We recognize that a certain amount of our personal bias may have affected the theme word lists. First, we came up with each theme and words associated with each theme as a group with minimal Internet research. Because of this, the words associated with each theme are limited to the words, songs, and experiences to which the four of us have been exposed. Second, each list of words are in no way extensive or exhaustive. Third, we removed many words that could have double meanings (e.g. we originally included "lean" as part of our drug theme; however, this resulted in the song "Lean on Me" by Bill Withers receiving a very high drug score. After we removed "lean" from the drug list, the problem was resolved). Despite these potential shortcomings, we still found that comparing song lyrics against these theme word lists generated meaningful results.
+
+
+<h2> Exploratory Analysis </h2>
+
+Since our data set only included songs up to the year 2015, we want to allow users to explore the themes of some more recent songs, or any song of their choosing. Users may enter the title and artist of any song, and our app scrapes the lyrics for this song from genius.com. We then run our theme score analysis on these lyrics, then display a bar graph showing all of theme scores for the song. Hopefully users will be able to learn something about both their music taste and themselves. 
+
+This is also a valuable opportunity for users to understand how our algorithm runs on songs they are familiar with before looking at our broader analysis. (See Appendix 3 for code)
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+
+love_words <- read_csv("love_words.csv")
+colnames(love_words)[2] <- "words"
+rural_words <- read_csv("rural_words.csv")
+colnames(rural_words)[2] <- "words"
+money_words <- read_csv("money_words.csv")
+colnames(money_words)[2] <- "words"
+drug_words <- read_csv("drug_words.csv")
+colnames(drug_words)[2] <- "words"
+religion_words <- read_csv("religion_words.csv")
+colnames(religion_words)[2] <- "words"
+urban_words <- read_csv("urban_words.csv")
+colnames(urban_words)[2] <- "words"
+sad_words <- read_csv("sad_words.csv")
+colnames(sad_words)[2] <- "words"
+profane_words <- read_csv("profane_words.csv")
+colnames(profane_words)[2] <- "words"
+
+shinyApp(
+
+  ui <- fluidPage(
+  tags$style(type="text/css",
+             ".shiny-output-error { visibility: hidden; }",
+             ".shiny-output-error:before { visibility: hidden; }"),
+  h1('What themes are in your favorite songs?'),
+  h3('Enter a song title and artist to find out!'),
+  br(),
+  textInput(inputId = "songName",
+            label = "Song name",
+            value = "US National Anthem"),
+  textInput(inputId="artistName",
+            label="Artist name",
+            value = "Doro"),
+  br(),
+  plotOutput(outputId = "plot1"),
+  br(),
+  textOutput(outputId = "text1")
+),
+
+  server <- function(input, output, session) {
+  current.artist <- reactive(paste0(str_replace_all(input$artistName," ","-"),"-"))
+  current.song <- reactive(paste0(str_replace_all(input$songName," ","-"),"-"))
+  url <- reactive(paste0("https://genius.com/", 
+                current.artist(),
+                current.song(),
+                "lyrics"))
+  text <- reactive(url() %>%
+    read_html() %>%
+    html_nodes("p") %>%
+    html_text())
+  
+  lyrics <- reactive(text()[[1]])
+
+  output$text1 <- renderText({
+    paste0(lyrics())
+    })
+  
+  output$plot1 <- renderPlot({
+    lyrics_replace <- str_replace_all(lyrics(),"\\n"," ")
+    lyrics_letters <- str_replace_all(lyrics_replace,"[:punct:]"," ")
+    lyrics_lower <- str_to_lower(lyrics_letters)
+    lyrics_list <- strsplit(lyrics_lower, " ")
+    lyrics_vector <- as.vector(unlist(lyrics_list, use.names=FALSE))
+    lyrics_vector <- lyrics_vector[lyrics_vector != ""]
+    lyrics_stemmed <- stemDocument(lyrics_vector)
+    lyrics_df <- data.frame(lyrics_stemmed)
+    colnames(lyrics_df)[1] <- "words"
+    
+    lyrics_df <- lyrics_df %>%
+      mutate(drug_words = 0) %>%
+      mutate(money_words = 0) %>%
+      mutate(love_words = 0) %>%
+      mutate(rural_words = 0) %>%
+      mutate(religion_words = 0) %>%
+      mutate(urban_words = 0) %>%
+      mutate(sad_words = 0) %>%
+      mutate(profane_words = 0) %>%
+      filter(!(words %in% stop_words$word))
+    
+    for (i in 1:nrow(lyrics_df)){
+      if(lyrics_df[i,1] %in% drug_words$words){
+        lyrics_df[i,2] = 1
+      }
+      if(lyrics_df[i,1] %in% money_words$words){
+        lyrics_df[i,3] = 1
+      }
+      if(lyrics_df[i,1] %in% love_words$words){
+        lyrics_df[i,4] = 1
+      }
+      if(lyrics_df[i,1] %in% rural_words$words){
+        lyrics_df[i,5] = 1
+      }
+      if(lyrics_df[i,1] %in% religion_words$words){
+        lyrics_df[i,6] = 1
+      }
+      if(lyrics_df[i,1] %in% urban_words$words){
+        lyrics_df[i,7] = 1
+      }
+      if(lyrics_df[i,1] %in% sad_words$words){
+        lyrics_df[i,8] = 1
+      }
+      if(lyrics_df[i,1] %in% profane_words$words){
+        lyrics_df[i,9] = 1
+      }
+    }
+    rural_count = sum(lyrics_df$rural_words)
+    money_count = sum(lyrics_df$money_words)
+    drug_count = sum(lyrics_df$drug_words)
+    love_count = sum(lyrics_df$love_words)
+    religion_count = sum(lyrics_df$religion_words)
+    urban_count = sum(lyrics_df$urban_words)
+    sad_count = sum(lyrics_df$sad_words)
+    profane_count = sum(lyrics_df$profane_words)
+    num_words = nrow(lyrics_df)
+
+    normalized_rural = rural_count/num_words
+    normalized_money = money_count/num_words
+    normalized_drug = drug_count/num_words
+    normalized_love = love_count/num_words
+    normalized_religion = religion_count/num_words
+    normalized_sad = sad_count/num_words
+    normalized_urban = urban_count/num_words
+    normalized_profane = profane_count/num_words
+
+    proportions <- c(normalized_rural, 
+                     normalized_money, 
+                     normalized_drug, 
+                     normalized_love,
+                     normalized_religion,
+                     normalized_urban,
+                     normalized_sad,
+                     normalized_profane)
+    proportions_df <- data.frame(proportions)
+
+    proportions_df <- proportions_df %>%
+      mutate(Theme = c("rurality","money","drug","love","religion","urbanity","sad","profane"))
+
+    proportions_df %>%
+      ggplot(aes(x=reorder(Theme,-proportions), y=proportions, fill=Theme))+
+      geom_bar(stat="identity")+
+      ggtitle(paste0("Top Themes in ",toupper(input$songName)," by ",toupper(input$artistName)))+
+      labs(x="Theme",y="Proportion of Words Related to Theme")+
+      theme_bw() +
+      theme(plot.title = element_text(hjust=0.5,size=24))
+  })
+    
+},
+
+  options = list(height = 1200)
+)
+```
+
+<h2> Question 1</h2>
+
+To answer the first question, we used the same theme score mentioned above. Users can put in a year and a theme and a scatterplot will be created showing the relationship between theme rank and year. Unfortunately, the scatterplots created from the analyses yielded inconclusive results. We found there was no discernable way to predict which songs were popular within the top 100 for a year. We associated our inability to predict which themes lead to higher rankings to several things. First, our data set is too small. Our prediction could be more accurate if our dataset included songs outside the top 100. We would then be able to use those songs to predict what songs would appear in the top 100. Second, the popularity of a song in a year often has little to do with its theme. There are other elements that affect a songs popularity such as its instrumental components or a song's artist. (See Appendix 4 for code)
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+library(plotly)
+word_data <- read_csv("master_file.csv")
+
+themes <- c("love","drugs","sadness","profanity","urbanity","rurality","religion","money")
+
+shinyApp(
+  
+  ui <- fluidPage(
+    h1('Billboard Top 100 Songs Yearly Theme Popularity 1964-2015'),
+    br(),
+    selectInput(inputId="theme",
+                label="Choose a theme",
+                choices=themes),
+    br(),
+    tags$div(class="slider", sliderInput(inputId = "slider1",
+                                          label = "Choose a year to display",
+                                          min = 1964,
+                                          max = 2015,
+                                          value = 1964,
+                                          step = 1,
+                                          sep = "",
+                                          animate = TRUE,
+                                          ticks = TRUE)),
+    br(),
+    plotlyOutput(outputId = "plot1")
+    ),
+    
+    server <- function(input, output, session) {
+      output$plot1 <- renderPlotly({
+        #text<- paste0("st_dev_",input$theme)
+        if (input$theme == "love"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_love, y=Rank, text=Song, group=Artist))
+        }
+        
+        else if (input$theme == "drugs"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_drug, y=Rank, text=Song, group=Artist))
+        }
+        else if (input$theme == "sadness"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_sad, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "religion"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_religion, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "rurality"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_rural, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "profanity"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_profane, y=Rank, text=Song, group=Artist))
+        }
+        else if (input$theme == "money"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_money, y=Rank, text=Song, group=Artist))
+        }
+        else{
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(y=Rank, x=st_dev_urban, text=Song, group=Artist))
+        }
+        
+        plot <- gg + theme_bw() +
+          ggtitle(paste0("Popularity of the theme of ",input$theme,", ",  input$slider1))+
+          labs(x="Standard Deviation from the Mean",y="Rank")+
+          theme(plot.title = element_text(hjust=0.5,size=24))          
+        
+        ggplotly(plot, tooltip = c("Song","Artist","Rank"))
+      })
+    },
+    options = list(height = 800)
+  )
+```
+
+
+<h2> Question 2 </h2>
+
+To answer the second question, we first looked at the percentage of words in each song's lyrics that corresponded to each theme's words. Then, we calculated the standard deviation of each of these percentages as compared to the percentages in the same theme for every song in the data set. We did this to normalize the results in order to allow comparisons across different themes. This allowed us to create our keystone graphic for Question 2.
+
+Allowing the user to choose a theme, we display a line plot showing the mean theme score of all songs in each year for the selected theme. We worried about very high theme scores skewing the mean too high for some years (for example, the word "stoned" in Rainy Day Woman by Bob Dylan skewing the drug results for its specific year very high), so we filtered to remove the songs above the 99th percentile for each theme. The user can explore the results on his or her own, but we want to highlight some especially interesting results. Over our time window, there has been a major increase in themes of drugs and profanity, as well a decrease in the theme of love. We are not claiming that American pop culture has decayed into a miasma of drugs and profanity as modern audiences lose interest in heartwarming and pleasant art, but the data speaks for itself. The user may also find interesting results looking at the rise of money as a theme. Another interesting result that seems somewhat counterintuitive given our other results is the decline of sadness. (See Appendix 5 for code)
+
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+
+word_data_filtered <- read_csv("master_file.csv")
+
+themes <- c("love","drugs","sadness","profanity","urban","rurality","religion","money")
+
+shinyApp(
+
+  ui <- fluidPage(
+  h1('Billboard Top 100 Lyrical Themes, 1964-2015'),
+  br(),
+  selectInput(inputId="theme",
+              label="Choose a theme",
+              choices=themes),
+  br(),
+  plotOutput(outputId = "plot1")
+),
+
+  server <- function(input, output, session) {
+  output$plot1 <- renderPlot({
+    if (input$theme == "love"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_love))
+    }
+    
+    else if (input$theme == "drugs"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_drug))
+    }
+    else if (input$theme == "sadness"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_sad))
+      
+    }
+    else if (input$theme == "religion"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_religion))
+      
+    }
+    else if (input$theme == "rurality"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_rural))
+      
+    }
+    else if (input$theme == "profanity"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_profane))
+    }
+    else if (input$theme == "money"){
+      gg<- word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_money))
+    }
+    else{
+      gg <- word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_urban))
+    }
+    
+    gg %>% ggplot(aes(x=Year,y=mean_sd,fill = input$theme))+
+      geom_line()+
+      theme_bw() +
+      ggtitle(paste0("Prevalence of the theme of ",input$theme,", 1964-2015"))+
+      labs(x="Year",y="Mean Standard Deviation")+
+      theme(plot.title = element_text(hjust=0.5,size=24))          
+    
+  })
+  
+},
+  options = list(height = 590)
+)
+```
+
+<h2> Conclusion </h2>
+
+Our exploration of the "Billboard 1964-2015 Songs + Lyrics" data set yielded many interesting results. While we were not able to make meaningful predictions regarding the correlation between relative theme scores and position within the top 100, we found some interesting trends charting the rise and fall of different themes in popular music in the United States. We also provided an interesting utility to allow users to explore the presence of various themes in songs of their choice. There are many exciting opportunities to improve our analysis as well. As far as we know, there were no built-in or open-source theme packages with words we could utilize in our analysis. Thus, we were forced to make our own theme lists and this may have limited the significance of our findings. We could imagine making our word lists open to the public so that they could be refined and expanded, thus making it easier to categorize text into certain themes. 
+
+
+<h2> Appendix </h2>
+
+<h4> Appendix 1. </h4> 
+
+Here is a list of all the eight categories along with their associated words:
+
+Love: marriage, love, sex, heart fuck, relationship, miss, baby, lonely, honey, dear, sweetie, beautiful, handsome, cute, hot, sexy, darling, falling, girl, man, woman, boy, want, desire, lust, passion, need, together, ex, romance, breakup, rose, sweet, kiss, hug, hold, devotion, feeling, body, husband, wife, girlfriend, boyfriend, touch 
+
+Drug: drug, weed, marijuana, cannabis, 420, pot, joint, molly, booze, alcohol, wine, vodka, gin, tequila, reefer, bowl, cocaine, coke, blow, inject, snort, dope, drunk, high, trip, acid, lsd, shrooms, blunt, beer, smoke, toke, kush, blaze, whiskey, stoned, pop, ecstasy, can, perc, tab, zooted, withdrawal, overdose, od, stoner, addict, needle, bong, bottle, rum, smack, inhale, lighter, party
+
+Rural: rural, barn, horse, truck, denim, jeans, old, road, dusty, dirt, hay, mountain, lake, cow, tractor, saddle, beer, cowboy, highway, honey, country, rural, whiskey, lasso, ride, field, farmer, home, family, home, wagon, boots, twang, south, town, grits, mom, banjo, guitar, fire, bible, west, moonshine, river, bayou, sky, fishing, crawdad, corn, creek, catfish
+
+Money: money, cash, dollas, dollars, benjamins, bands, racks, tens, twenties, singles, ones, hundreds, hunnids, milli, million, ring, chain, grill, wealth, affluence, greed, stock, fortune, finance, jewel, diamond, gold, silver, rich, wealth, power, capital, estate, inherit, heir
+
+Religion: religion, devil, god, jesus, bible, allah, torah, gospel, apostles, buddha , prophets, muhammed, mohammed, adam, eve, eden, garden, sin, heaven , hell, purgatory, inferno, brimstone, cane, abel, moses, sabbath, repent, reconciliation, mecca, medina, islam, christian, jew, judaism, muslim, isaac, judah, lucifer, noah, ark, bethlehem, mary, joseph, sacred, sacrement, church, synagogue, temple, mosque, steeple, meditate, pray, ashram, cathedral, crucifix, christ, david, nativity
+
+Urban: city, concrete, corner, light, block, car, cops, streetlight, stoplight, taxi, cab, train, subway, bus, bustle, busy, skyscrapers, building, urban, downtown, uptown, metro, cosmopolitan, mayor, park, street, avenue, boulevard, skyline, zone, neighborhood, hood, ghetto, projects, apartment, business
+
+Sad: sad, loss, cry, tear, pain, death, dark, leave, miss, funeral, depression, ill, sick, jail, hospital, evict, break, cheat, affair, adultery, frown, weak, fear, hurt, alone, lonely, blood, wreck, die, goodbye, regret, guilt, remorse, sorrow, suffer, grief, mourning, cold, bleak, cloudy, rain, gloom, sob, bye
+
+Profane: fuck, shit, bitch, asshole, motherfucker, cunt, bastard, ass, crap, damn, goddamn, hell, prick, slut, twat, prick, whore, jerk, pussy, dick, butt, rump, chode, dong, dang, piss, cock, bastard, darn 
+
+
+<h4> Appendix 2. </h4> 
+
+Note that the .xlsx files read in at the beginning are excel files containing all the words related to the given theme, with each word in its own row. 
+
+```{r, eval=F, echo=T}
+library(tidyverse)
+library(readxl)
+library(tidytext)
+library(tm)
+
+love_words <- read_excel('love_words.xlsx',
+                         sheet = 1, col_names = FALSE)
+colnames(love_words)[1] <- "words"
+love_stemmed_words <- stemDocument(love_words$words)
+
+drug_words <- read_excel('drug_words.xlsx',
+                         sheet = 1, col_names = FALSE)
+colnames(drug_words)[1] <- "words"
+drug_stemmed_words <- stemDocument(drug_words$words)
+
+rural_words <- read_excel('rural_words.xlsx',
+                          sheet = 1, col_names = FALSE)
+colnames(rural_words)[1] <- "words"
+rural_stemmed_words <- stemDocument(rural_words$words)
+
+money_words <- read_excel('money_words.xlsx',
+                          sheet = 1, col_names = FALSE)
+colnames(money_words)[1] <- "words"
+money_stemmed_words <- stemDocument(money_words$words)
+
+religion_words <- read_excel('religion_words.xlsx',
+                             sheet = 1, col_names = FALSE)
+colnames(religion_words)[1] <- "words"
+religion_stemmed_words <- stemDocument(religion_words$words)
+
+urban_words <- read_excel('urban_words.xlsx',
+                          sheet = 1, col_names = FALSE)
+colnames(urban_words)[1] <- "words"
+urban_stemmed_words <- stemDocument(urban_words$words)
+
+sad_words <- read_excel('sad_words.xlsx',
+                        sheet = 1, col_names = FALSE)
+colnames(sad_words)[1] <- "words"
+sad_stemmed_words <- stemDocument(sad_words$words)
+
+profane_words <- read_excel('profane_words.xlsx',
+                            sheet = 1, col_names = FALSE)
+colnames(profane_words)[1] <- "words"
+profane_stemmed_words <- stemDocument(profane_words$words)
+
+
+write.csv(love_stemmed_words, "love_words.csv")
+write.csv(rural_stemmed_words, "rural_words.csv")
+write.csv(money_stemmed_words, "money_words.csv")
+write.csv(drug_stemmed_words, "drug_words.csv")
+write.csv(religion_stemmed_words, "religion_words.csv")
+write.csv(urban_stemmed_words, "urban_words.csv")
+write.csv(profane_stemmed_words, "profane_words.csv")
+write.csv(sad_stemmed_words, "sad_words.csv")
+
+
+billboard_data <- read_csv('billboard_lyrics_1964-2015.csv')
+
+billboard_data <- billboard_data %>%
+  filter(!is.na(Lyrics))
+
+
+every_word <- billboard_data %>%
+  unnest_tokens("word", "Lyrics")
+
+
+every_word <- every_word %>%
+  mutate(religion_word = 0) %>%
+  mutate(urban_word = 0) %>%
+  mutate(sad_word = 0) %>%
+  mutate(profane_word = 0) %>%
+  mutate(drug_word = 0) %>%
+  mutate(money_word = 0) %>%
+  mutate(love_word = 0) %>%
+  mutate(rural_word = 0)%>%
+  filter(!(word %in% stop_words$word))
+
+
+every_word$word <- stemDocument(every_word$word)
+
+for (i in 1:nrow(every_word)){
+
+  if(every_word[i,6] %in% religion_stemmed_words){
+    every_word[i,7] = 1
+  }
+  if(every_word[i,6] %in% urban_stemmed_words){
+    every_word[i,8] = 1
+  }
+  if(every_word[i,6] %in% sad_stemmed_words){
+    every_word[i,9] = 1
+  }
+  if(every_word[i,6] %in% profane_stemmed_words){
+    every_word[i,10] = 1
+  }
+  if(every_word[i,6] %in% drug_stemmed_words){
+    every_word[i,11] = 1
+  }
+  if(every_word[i,6] %in% money_stemmed_words){
+    every_word[i,12] = 1
+  }
+  if(every_word[i,6] %in% love_stemmed_words){
+    every_word[i,13] = 1
+  }
+  if(every_word[i,6] %in% rural_stemmed_words){
+    every_word[i,14] = 1
+  }
+}
+
+word_data <- every_word %>%
+  group_by(Year,Rank,Song,Artist)%>%
+  summarize()
+
+#Rural
+rural_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(rural_count = sum(rural_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_rural = rural_count/num_words)
+
+rural_1 <- rural_counts %>%
+  select(normalized_rural)
+
+rural_scaled <- scale(rural_1$normalized_rural)
+
+rural_counts$st_dev_rural <- rural_scaled
+
+word_data$rural_count <- rural_counts$rural_count
+word_data$normalized_rural <- rural_counts$normalized_rural
+word_data$st_dev_rural <- rural_counts$st_dev_rural
+
+#Love
+love_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(love_count = sum(love_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_love = love_count/num_words)
+
+love_1 <- love_counts %>%
+  select(normalized_love)
+
+love_scaled <- scale(love_1$normalized_love)
+
+love_counts$st_dev_love <- love_scaled
+
+word_data$love_count <- love_counts$love_count
+word_data$normalized_love <- love_counts$normalized_love
+word_data$st_dev_love <- love_counts$st_dev_love
+
+#Drugs
+drug_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(drug_count = sum(drug_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_drug = drug_count/num_words)
+
+drug_1 <- drug_counts %>%
+  select(normalized_drug)
+
+drug_scaled <- scale(drug_1$normalized_drug)
+
+drug_counts$st_dev_drug <- drug_scaled
+
+word_data$drug_count <- drug_counts$drug_count
+word_data$normalized_drug <- drug_counts$normalized_drug
+word_data$st_dev_drug <- drug_counts$st_dev_drug
+
+#Money
+money_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(money_count = sum(money_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_money = money_count/num_words)
+
+money_1 <- money_counts %>%
+  select(normalized_money)
+
+money_scaled <- scale(money_1$normalized_money)
+
+money_counts$st_dev_money <- money_scaled
+
+word_data$money_count <- money_counts$money_count
+word_data$normalized_money <- money_counts$normalized_money
+word_data$st_dev_money <- money_counts$st_dev_money
+
+#Religion
+religion_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(religion_count = sum(religion_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_religion = religion_count/num_words)
+
+religion_1 <- religion_counts %>%
+  select(normalized_religion)
+
+religion_scaled <- scale(religion_1$normalized_religion)
+
+religion_counts$st_dev_religion <- religion_scaled
+
+word_data$religion_count <- religion_counts$religion_count
+word_data$normalized_religion <- religion_counts$normalized_religion
+word_data$st_dev_religion <- religion_counts$st_dev_religion
+
+#Urban
+urban_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(urban_count = sum(urban_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_urban = urban_count/num_words)
+
+urban_1 <- urban_counts %>%
+  select(normalized_urban)
+
+urban_scaled <- scale(urban_1$normalized_urban)
+
+urban_counts$st_dev_urban <- urban_scaled
+
+word_data$urban_count <- urban_counts$urban_count
+word_data$normalized_urban <- urban_counts$normalized_urban
+word_data$st_dev_urban <- urban_counts$st_dev_urban
+
+#Sad
+sad_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(sad_count = sum(sad_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_sad = sad_count/num_words)
+
+sad_1 <- sad_counts %>%
+  select(normalized_sad)
+
+sad_scaled <- scale(sad_1$normalized_sad)
+
+sad_counts$st_dev_sad <- sad_scaled
+
+word_data$sad_count <- sad_counts$sad_count
+word_data$normalized_sad <- sad_counts$normalized_sad
+word_data$st_dev_sad <- sad_counts$st_dev_sad
+
+#Profane
+profane_counts <- every_word %>%
+  group_by(Year, Rank, Song, Artist) %>%
+  summarize(profane_count = sum(profane_word),
+            num_words = sum(n())) %>%
+  mutate(normalized_profane = profane_count/num_words)
+
+profane_1 <- profane_counts %>%
+  select(normalized_profane)
+
+profane_scaled <- scale(profane_1$normalized_profane)
+
+profane_counts$st_dev_profane <- profane_scaled
+
+word_data$profane_count <- profane_counts$profane_count
+word_data$normalized_profane <- profane_counts$normalized_profane
+word_data$st_dev_profane <- profane_counts$st_dev_profane
+
+word_data_filtered <- word_data %>%
+  filter(st_dev_love < quantile(word_data$st_dev_love, 0.99)) %>%
+  filter(st_dev_sad < quantile(word_data$st_dev_sad, 0.99))%>%
+  filter(st_dev_religion < quantile(word_data$st_dev_religion, 0.99))%>%
+  filter(st_dev_money < quantile(word_data$st_dev_money, 0.99))%>%
+  filter(st_dev_rural < quantile(word_data$st_dev_rural, 0.99))%>%
+  filter(st_dev_urban < quantile(word_data$st_dev_urban, 0.99))%>%
+  filter(st_dev_profane < quantile(word_data$st_dev_profane, 0.99))%>%
+  filter(st_dev_drug < quantile(word_data$st_dev_drug, 0.99))
+
+write.csv(word_data_filtered, "master_file.csv")
+```
+
+
+<h4> Appendix 3. </h4> 
+
+```{r, eval=F, echo=T}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+
+love_words <- read_csv("love_words.csv")
+colnames(love_words)[2] <- "words"
+rural_words <- read_csv("rural_words.csv")
+colnames(rural_words)[2] <- "words"
+money_words <- read_csv("money_words.csv")
+colnames(money_words)[2] <- "words"
+drug_words <- read_csv("drug_words.csv")
+colnames(drug_words)[2] <- "words"
+religion_words <- read_csv("religion_words.csv")
+colnames(religion_words)[2] <- "words"
+urban_words <- read_csv("urban_words.csv")
+colnames(urban_words)[2] <- "words"
+sad_words <- read_csv("sad_words.csv")
+colnames(sad_words)[2] <- "words"
+profane_words <- read_csv("profane_words.csv")
+colnames(profane_words)[2] <- "words"
+
+shinyApp(
+
+  ui <- fluidPage(
+  tags$style(type="text/css",
+             ".shiny-output-error { visibility: hidden; }",
+             ".shiny-output-error:before { visibility: hidden; }"),
+  h1('What themes are in your favorite songs?'),
+  h3('Enter a song title and artist to find out!'),
+  br(),
+  textInput(inputId = "songName",
+            label = "Song name"),
+  textInput(inputId="artistName",
+            label="Artist name"),
+  br(),
+  plotOutput(outputId = "plot1"),
+  br(),
+  textOutput(outputId = "text1")
+),
+
+  server <- function(input, output, session) {
+  current.artist <- reactive(paste0(str_replace_all(input$artistName," ","-"),"-"))
+  current.song <- reactive(paste0(str_replace_all(input$songName," ","-"),"-"))
+  url <- reactive(paste0("https://genius.com/", 
+                current.artist(),
+                current.song(),
+                "lyrics"))
+  text <- reactive(url() %>%
+    read_html() %>%
+    html_nodes("p") %>%
+    html_text())
+  
+  lyrics <- reactive(text()[[1]])
+
+  output$text1 <- renderText({
+    
+    #artist_split <- strsplit(input$artistName, " ")
+    #song_split <- strsplit(input$songName, " ")
+    #artistNameLink <- paste0(str_replace_all(input$artistName," ","-"),"-")
+    #songNameLink <- paste0(str_replace_all(input$songName," ","-"),"-")
+      #paste0(url)
+    paste0(lyrics())
+      
+    })
+  
+  output$plot1 <- renderPlot({
+    lyrics_replace <- str_replace_all(lyrics(),"\\n"," ")
+    lyrics_letters <- str_replace_all(lyrics_replace,"[:punct:]"," ")
+    lyrics_lower <- str_to_lower(lyrics_letters)
+    lyrics_list <- strsplit(lyrics_lower, " ")
+    lyrics_vector <- as.vector(unlist(lyrics_list, use.names=FALSE))
+    lyrics_vector <- lyrics_vector[lyrics_vector != ""]
+    lyrics_stemmed <- stemDocument(lyrics_vector)
+    lyrics_df <- data.frame(lyrics_stemmed)
+    colnames(lyrics_df)[1] <- "words"
+    
+    lyrics_df <- lyrics_df %>%
+      mutate(drug_words = 0) %>%
+      mutate(money_words = 0) %>%
+      mutate(love_words = 0) %>%
+      mutate(rural_words = 0) %>%
+      mutate(religion_words = 0) %>%
+      mutate(urban_words = 0) %>%
+      mutate(sad_words = 0) %>%
+      mutate(profane_words = 0) %>%
+      filter(!(words %in% stop_words$word))
+    
+    for (i in 1:nrow(lyrics_df)){
+      if(lyrics_df[i,1] %in% drug_words$words){
+        lyrics_df[i,2] = 1
+      }
+      if(lyrics_df[i,1] %in% money_words$words){
+        lyrics_df[i,3] = 1
+      }
+      if(lyrics_df[i,1] %in% love_words$words){
+        lyrics_df[i,4] = 1
+      }
+      if(lyrics_df[i,1] %in% rural_words$words){
+        lyrics_df[i,5] = 1
+      }
+      if(lyrics_df[i,1] %in% religion_words$words){
+        lyrics_df[i,6] = 1
+      }
+      if(lyrics_df[i,1] %in% urban_words$words){
+        lyrics_df[i,7] = 1
+      }
+      if(lyrics_df[i,1] %in% sad_words$words){
+        lyrics_df[i,8] = 1
+      }
+      if(lyrics_df[i,1] %in% profane_words$words){
+        lyrics_df[i,9] = 1
+      }
+    }
+    rural_count = sum(lyrics_df$rural_words)
+    money_count = sum(lyrics_df$money_words)
+    drug_count = sum(lyrics_df$drug_words)
+    love_count = sum(lyrics_df$love_words)
+    religion_count = sum(lyrics_df$religion_words)
+    urban_count = sum(lyrics_df$urban_words)
+    sad_count = sum(lyrics_df$sad_words)
+    profane_count = sum(lyrics_df$profane_words)
+    num_words = nrow(lyrics_df)
+
+    normalized_rural = rural_count/num_words
+    normalized_money = money_count/num_words
+    normalized_drug = drug_count/num_words
+    normalized_love = love_count/num_words
+    normalized_religion = religion_count/num_words
+    normalized_sad = sad_count/num_words
+    normalized_urban = urban_count/num_words
+    normalized_profane = profane_count/num_words
+
+    proportions <- c(normalized_rural, 
+                     normalized_money, 
+                     normalized_drug, 
+                     normalized_love,
+                     normalized_religion,
+                     normalized_urban,
+                     normalized_sad,
+                     normalized_profane)
+    proportions_df <- data.frame(proportions)
+
+    proportions_df <- proportions_df %>%
+      mutate(Theme = c("rurality","money","drug","love","religion","urbanity","sad","profane"))
+
+    proportions_df %>%
+      ggplot(aes(x=reorder(Theme,-proportions), y=proportions, fill=Theme))+
+      geom_bar(stat="identity")+
+      ggtitle(paste0("Top Themes in ",toupper(input$songName)," by ",toupper(input$artistName)))+
+      labs(x="Theme",y="Proportion of Words Related to Theme")+
+      theme_bw() +
+      theme(plot.title = element_text(hjust=0.5,size=24))
+  })
+    
+},
+
+  options = list(height = 1200)
+)
+```
+
+
+<h4> Appendix 4. </h4>  
+
+```{r, eval=F, echo=T}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+library(plotly)
+word_data <- read_csv("master_file.csv")
+
+themes <- c("love","drugs","sadness","profanity","urbanity","rurality","religion","money")
+
+shinyApp(
+  
+  ui <- fluidPage(
+    h1('Billboard Top 100 Songs Yearly Theme Popularity 1964-2015'),
+    br(),
+    selectInput(inputId="theme",
+                label="Choose a theme",
+                choices=themes),
+    br(),
+    tags$div(class="slider", sliderInput(inputId = "slider1",
+                                          label = "Choose a year to display",
+                                          min = 1964,
+                                          max = 2015,
+                                          value = 1964,
+                                          step = 1,
+                                          sep = "",
+                                          animate = TRUE,
+                                          ticks = TRUE)),
+    br(),
+    plotlyOutput(outputId = "plot1")
+    ),
+    
+    server <- function(input, output, session) {
+      output$plot1 <- renderPlotly({
+        #text<- paste0("st_dev_",input$theme)
+        if (input$theme == "love"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_love, y=Rank, text=Song, group=Artist))
+        }
+        
+        else if (input$theme == "drugs"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_drug, y=Rank, text=Song, group=Artist))
+        }
+        else if (input$theme == "sadness"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_sad, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "religion"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_religion, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "rurality"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_rural, y=Rank, text=Song, group=Artist))
+          
+        }
+        else if (input$theme == "profanity"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_profane, y=Rank, text=Song, group=Artist))
+        }
+        else if (input$theme == "money"){
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(x=st_dev_money, y=Rank, text=Song, group=Artist))
+        }
+        else{
+          gg <- word_data %>%
+            filter(Year == input$slider1)%>%
+            ggplot()+
+            geom_point(aes(y=Rank, x=st_dev_urban, text=Song, group=Artist))
+        }
+        
+        plot <- gg + theme_bw() +
+          ggtitle(paste0("Popularity of the theme of ",input$theme,", ",  input$slider1))+
+          labs(x="Standard Deviation from the Mean",y="Rank")+
+          theme(plot.title = element_text(hjust=0.5,size=24))          
+        
+        ggplotly(plot, tooltip = c("Song","Artist","Rank"))
+      })
+    },
+    options = list(height = 800)
+  )
+```
+
+
+<h4> Appendix 5. </h4>  
+
+```{r, eval=F, echo=T}
+library(shiny)
+library(ggplot2)
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(tm)
+
+word_data_filtered <- read_csv("master_file.csv")
+
+themes <- c("love","drugs","sadness","profanity","urban","rurality","religion","money")
+
+shinyApp(
+
+  ui <- fluidPage(
+  h1('Billboard Top 100 Lyrical Themes, 1964-2015'),
+  br(),
+  selectInput(inputId="theme",
+              label="Choose a theme",
+              choices=themes),
+  br(),
+  plotOutput(outputId = "plot1")
+),
+
+  server <- function(input, output, session) {
+  output$plot1 <- renderPlot({
+    if (input$theme == "love"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_love))
+    }
+    
+    else if (input$theme == "drugs"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_drug))
+    }
+    else if (input$theme == "sadness"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_sad))
+      
+    }
+    else if (input$theme == "religion"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_religion))
+      
+    }
+    else if (input$theme == "rurality"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_rural))
+      
+    }
+    else if (input$theme == "profanity"){
+      gg<-word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_profane))
+    }
+    else if (input$theme == "money"){
+      gg<- word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_money))
+    }
+    else{
+      gg <- word_data_filtered%>%
+        group_by(Year)%>%
+        summarize(mean_sd = mean(st_dev_urban))
+    }
+    
+    gg %>% ggplot(aes(x=Year,y=mean_sd,fill = input$theme))+
+      geom_line()+
+      theme_bw() +
+      ggtitle(paste0("Prevalence of the theme of ",input$theme,", 1964-2015"))+
+      labs(x="Year",y="Mean Standard Deviation")+
+      theme(plot.title = element_text(hjust=0.5,size=24))          
+    
+  })
+  
+},
+  options = list(height = 590)
+)
+```
